@@ -178,7 +178,7 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
                 {'role': 'system', 'content': systemPrompt},
                 {'role': 'user', 'content': _liveTranscript},
               ],
-              'max_tokens': 400,
+              'max_completion_tokens': 400,
             }),
           )
           .timeout(const Duration(seconds: 30));
