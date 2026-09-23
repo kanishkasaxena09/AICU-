@@ -1,13 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:aicu/models/demo_patients.dart';
+import 'package:aicu/models/patient.dart';
 import 'package:aicu/repositories/escalation_repository.dart';
 import 'package:aicu/repositories/patient_note_repository.dart';
 import 'package:aicu/repositories/vitals_repository.dart';
 import 'package:aicu/screens/clinical_dashboard_screen.dart';
 import 'package:aicu/screens/clinical_insights_screen.dart';
 import 'package:aicu/screens/common/aicu_ui.dart';
-import 'package:aicu/screens/nurse_demo_screen.dart';
 import 'package:aicu/screens/patient_file_screen.dart';
 import 'package:aicu/screens/voice_ai_screen.dart';
 import 'firebase_options.dart';
@@ -42,6 +43,9 @@ class AicuShellScreen extends StatefulWidget {
 
 class _AicuShellScreenState extends State<AicuShellScreen> {
   int _index = 0;
+  Patient _selectedPatient = janeDoe;
+
+  void _selectPatient(Patient patient) => setState(() => _selectedPatient = patient);
 
   // ponytail: demo-only stand-in for real login. No AuthRepository/RoleRouter
   // wiring yet (Task 3 built them, unused), so this in-memory toggle lets us
@@ -56,15 +60,17 @@ class _AicuShellScreenState extends State<AicuShellScreen> {
       ClinicalDashboardScreen(
         vitalsRepository: widget._vitalsRepository,
         escalationRepository: widget._escalationRepository,
+        onPatientSelected: _selectPatient,
       ),
       PatientFileScreen(
-        patient: demoPatient,
+        patient: _selectedPatient,
+        info: demoPatientInfo[_selectedPatient.patientId]!,
         vitalsRepository: widget._vitalsRepository,
         escalationRepository: widget._escalationRepository,
       ),
       VoiceAiScreen(
-        patientId: demoPatient.patientId,
-        wardId: demoPatient.wardId,
+        patientId: _selectedPatient.patientId,
+        wardId: _selectedPatient.wardId,
         patientNoteRepository: widget._patientNoteRepository,
         vitalsRepository: widget._vitalsRepository,
         escalationRepository: widget._escalationRepository,

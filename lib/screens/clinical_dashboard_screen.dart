@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:aicu/models/demo_patients.dart';
+import 'package:aicu/models/patient.dart';
 import 'package:aicu/repositories/escalation_repository.dart';
 import 'package:aicu/repositories/vitals_repository.dart';
 import 'package:aicu/screens/common/aicu_ui.dart';
-import 'package:aicu/screens/nurse_demo_screen.dart';
 import 'package:aicu/screens/patient_file_screen.dart';
 
 class ClinicalDashboardScreen extends StatelessWidget {
   final VitalsRepository vitalsRepository;
   final EscalationRepository escalationRepository;
-  const ClinicalDashboardScreen({super.key, required this.vitalsRepository, required this.escalationRepository});
+  final ValueChanged<Patient> onPatientSelected;
+  const ClinicalDashboardScreen({
+    super.key,
+    required this.vitalsRepository,
+    required this.escalationRepository,
+    required this.onPatientSelected,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -21,23 +28,31 @@ class ClinicalDashboardScreen extends StatelessWidget {
           _HandoverSummaryCard(),
           const SizedBox(height: 16),
           _SearchAndFilterRow(),
-          const SizedBox(height: 12),
-          _PatientResultCard(onSelect: () => _openPatientFile(context)),
           const SizedBox(height: 16),
           _QuickActionsRow(),
           const SizedBox(height: 16),
           const Text('Ward Patients', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
-          _PatientListCard(vitalsRepository: vitalsRepository, onSelect: () => _openPatientFile(context)),
+          for (final patient in demoPatients) ...[
+            _PatientListCard(
+              patient: patient,
+              info: demoPatientInfo[patient.patientId]!,
+              vitalsRepository: vitalsRepository,
+              onSelect: () => _openPatientFile(context, patient),
+            ),
+            const SizedBox(height: 12),
+          ],
         ],
       ),
     );
   }
 
-  void _openPatientFile(BuildContext context) {
+  void _openPatientFile(BuildContext context, Patient patient) {
+    onPatientSelected(patient);
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => PatientFileScreen(
-        patient: demoPatient,
+        patient: patient,
+        info: demoPatientInfo[patient.patientId]!,
         vitalsRepository: vitalsRepository,
         escalationRepository: escalationRepository,
       ),
@@ -110,35 +125,6 @@ class _SearchAndFilterRow extends StatelessWidget {
   }
 }
 
-class _PatientResultCard extends StatelessWidget {
-  final VoidCallback onSelect;
-  const _PatientResultCard({required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) {
-    return AicuCard(
-      child: Row(children: [
-        const CircleAvatar(radius: 24, backgroundColor: AicuColors.tealBg, child: Text('JD', style: TextStyle(color: AicuColors.primaryDark, fontWeight: FontWeight.bold))),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: const [
-              Text('Jane Doe (Demo)', style: TextStyle(fontWeight: FontWeight.bold)),
-              SizedBox(width: 8),
-              Pill('P-10245'),
-            ]),
-            const SizedBox(height: 4),
-            const Pill('45y F • B+', background: AicuColors.background, foreground: Colors.black87),
-            const SizedBox(height: 4),
-            const Text('Diagnosis: Pneumonia', style: TextStyle(color: Colors.black54, fontSize: 12)),
-          ]),
-        ),
-        TextButton(onPressed: onSelect, child: const Text('Select →')),
-      ]),
-    );
-  }
-}
-
 class _QuickActionsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -164,41 +150,52 @@ class _QuickActionsRow extends StatelessWidget {
 }
 
 class _PatientListCard extends StatelessWidget {
+  final Patient patient;
+  final DemoPatientInfo info;
   final VitalsRepository vitalsRepository;
   final VoidCallback onSelect;
-  const _PatientListCard({required this.vitalsRepository, required this.onSelect});
+  const _PatientListCard({
+    required this.patient,
+    required this.info,
+    required this.vitalsRepository,
+    required this.onSelect,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final age = computeAge(patient.dob);
+    final initials = patient.fullName.trim().isEmpty
+        ? '?'
+        : patient.fullName.trim().split(RegExp(r'\s+')).map((s) => s[0]).take(2).join().toUpperCase();
     return AicuCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          const CircleAvatar(radius: 22, backgroundColor: AicuColors.tealBg, child: Text('JD', style: TextStyle(color: AicuColors.primaryDark, fontWeight: FontWeight.bold))),
+          CircleAvatar(radius: 22, backgroundColor: AicuColors.tealBg, child: Text(initials, style: const TextStyle(color: AicuColors.primaryDark, fontWeight: FontWeight.bold))),
           const SizedBox(width: 10),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: const [
-                Text('Jane Doe (Demo)', style: TextStyle(fontWeight: FontWeight.bold)),
-                SizedBox(width: 8),
-                Pill('P-10245'),
+              Row(children: [
+                Text(patient.fullName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                Pill(patient.patientId),
               ]),
               const SizedBox(height: 2),
-              const Text('45y F • Room 4B • Bed 2', style: TextStyle(fontSize: 12, color: Colors.black54)),
+              Text('${age}y ${info.sex} • ${info.bedLabel}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
             ]),
           ),
           const Pill('Inpatient Active'),
         ]),
         const SizedBox(height: 10),
-        Row(children: const [
-          Icon(Icons.favorite, size: 14, color: AicuColors.alert),
-          SizedBox(width: 4),
-          Text('Diagnosis: Pneumonia', style: TextStyle(fontSize: 12)),
+        Row(children: [
+          const Icon(Icons.favorite, size: 14, color: AicuColors.alert),
+          const SizedBox(width: 4),
+          Text('Diagnosis: ${patient.diagnosis}', style: const TextStyle(fontSize: 12)),
         ]),
         const SizedBox(height: 8),
-        const Pill('Attending: Dr. Mehta', background: AicuColors.background, foreground: Colors.black87),
+        Pill('Attending: ${info.attendingPhysician}', background: AicuColors.background, foreground: Colors.black87),
         const SizedBox(height: 10),
         StreamBuilder<Map<String, dynamic>?>(
-          stream: vitalsRepository.watchLatestVitals(demoPatient.patientId),
+          stream: vitalsRepository.watchLatestVitals(patient.patientId),
           builder: (context, snapshot) {
             final data = snapshot.data;
             if (data == null) {

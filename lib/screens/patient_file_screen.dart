@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:aicu/models/demo_patients.dart';
 import 'package:aicu/models/patient.dart';
 import 'package:aicu/repositories/escalation_repository.dart';
 import 'package:aicu/repositories/vitals_repository.dart';
@@ -8,18 +9,24 @@ import 'package:aicu/screens/nurse_demo_screen.dart';
 
 class PatientFileScreen extends StatelessWidget {
   final Patient patient;
+  final DemoPatientInfo info;
   final VitalsRepository vitalsRepository;
   final EscalationRepository escalationRepository;
   const PatientFileScreen({
     super.key,
     required this.patient,
+    required this.info,
     required this.vitalsRepository,
     required this.escalationRepository,
   });
 
   void _openVitalsEntry(BuildContext context) {
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => NurseDemoScreen(vitalsRepository: vitalsRepository, escalationRepository: escalationRepository),
+      builder: (_) => NurseDemoScreen(
+        patient: patient,
+        vitalsRepository: vitalsRepository,
+        escalationRepository: escalationRepository,
+      ),
     ));
   }
 
@@ -49,7 +56,7 @@ class PatientFileScreen extends StatelessWidget {
         body: Column(children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-            child: _HeaderCard(patient: patient),
+            child: _HeaderCard(patient: patient, info: info),
           ),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -85,7 +92,8 @@ class PatientFileScreen extends StatelessWidget {
 
 class _HeaderCard extends StatelessWidget {
   final Patient patient;
-  const _HeaderCard({required this.patient});
+  final DemoPatientInfo info;
+  const _HeaderCard({required this.patient, required this.info});
 
   @override
   Widget build(BuildContext context) {
@@ -106,19 +114,18 @@ class _HeaderCard extends StatelessWidget {
                 const Pill('P-10245'),
               ]),
               const SizedBox(height: 4),
-              Text('${age}y F • Blood group B+', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+              Text('${age}y ${info.sex} • Blood group ${info.bloodGroup}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
             ]),
           ),
         ]),
         const SizedBox(height: 12),
         Wrap(spacing: 8, runSpacing: 8, children: [
           Pill('Allergy: ${patient.allergies.join(', ')}', background: AicuColors.alertBg, foreground: AicuColors.alert, icon: Icons.error_outline),
-          const Pill('Type 2 Diabetes'),
-          const Pill('Stage 1 Hypertension'),
+          for (final condition in info.conditions) Pill(condition),
         ]),
         const SizedBox(height: 12),
         Row(children: [
-          const Expanded(child: Text('Attending: Dr. Mehta (Lead Physician, Internal Medicine)', style: TextStyle(fontSize: 12, color: Colors.black87))),
+          Expanded(child: Text('Attending: ${info.attendingPhysician} (Lead Physician, Internal Medicine)', style: const TextStyle(fontSize: 12, color: Colors.black87))),
           TextButton(onPressed: () => showComingSoon(context, 'Attending Details'), child: const Text('Details')),
         ]),
       ]),
