@@ -45,7 +45,7 @@ class EscalationRepository {
     final ref = firestore.collection('escalations').doc(escalationId);
     final doc = await ref.get();
     final raisedAt = doc.data()!['raisedAt'];
-    final raisedAtTime = raisedAt is DateTime ? raisedAt : DateTime.now();
+    final raisedAtTime = raisedAt is Timestamp ? raisedAt.toDate() : DateTime.now();
     final now = DateTime.now();
     final responseTimeSeconds = now.difference(raisedAtTime).inSeconds.clamp(0, 1 << 31);
 
