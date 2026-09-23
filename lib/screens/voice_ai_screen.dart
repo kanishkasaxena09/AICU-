@@ -1,16 +1,23 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:aicu/models/patient_note.dart';
 import 'package:aicu/repositories/patient_note_repository.dart';
 import 'package:aicu/screens/common/aicu_ui.dart';
+import 'package:aicu/screens/nurse_demo_screen.dart' show demoPatient;
 
 // Speech-to-text capture (mic -> live transcript) is real, via the
-// speech_to_text package. The "Clinical Response" card below is still a
-// hardcoded UI mock — there is no LLM/AI-inference integration in this
-// project. Do not mistake the response card for real AI. What IS real:
-// "Save as note" persists the live transcript to Firestore via
-// PatientNoteRepository, and the notes list is a live stream of real
-// patientNotes docs.
+// speech_to_text package. "Save as note" persists the live transcript to
+// Firestore via PatientNoteRepository, and the notes list is a live stream
+// of real patientNotes docs. The "Clinical Response" card is now backed by
+// a real Azure OpenAI chat-completions call (see _getAiResponse below) —
+// the API key is read from a compile-time --dart-define and never
+// hardcoded.
+const _azureOpenAiEndpoint =
+    'https://info-mjgvb8f5-eastus2.openai.azure.com/openai/v1/chat/completions';
+const _azureOpenAiApiKey = String.fromEnvironment('AZURE_OPENAI_API_KEY');
 class VoiceAiScreen extends StatefulWidget {
   final String patientId;
   final String wardId;
@@ -36,10 +43,8 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
   bool _listening = false;
   String _liveTranscript = '';
 
-  // AI response is still a static placeholder — see class-level comment.
-  static const _sampleResponse =
-      'NEWS2 trend for Jane Doe (Demo) over the last 24h shows two escalations above threshold, '
-      'both acknowledged within target response time. Current band: Low-Medium.';
+  bool _aiLoading = false;
+  String? _aiResponse;
 
   @override
   void dispose() {
@@ -102,6 +107,70 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
     messenger.showSnackBar(const SnackBar(content: Text('Note saved')));
   }
 
+  Future<void> _getAiResponse() async {
+    if (_liveTranscript.trim().isEmpty) return;
+    final messenger = ScaffoldMessenger.of(context);
+
+    if (_azureOpenAiApiKey.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('AI response not configured — missing API key')),
+      );
+      return;
+    }
+
+    setState(() {
+      _aiLoading = true;
+      _aiResponse = null;
+    });
+
+    try {
+      final systemPrompt =
+          'You are a clinical assistant helping a nurse or doctor quickly interpret a spoken '
+          'query about a patient. Give a brief, clear, clinically appropriate response in 2-4 '
+          'sentences. Patient: ${demoPatient.fullName}, diagnosis: ${demoPatient.diagnosis}, '
+          'allergies: ${demoPatient.allergies.join(', ')}.';
+
+      final response = await http
+          .post(
+            Uri.parse(_azureOpenAiEndpoint),
+            headers: {
+              'Content-Type': 'application/json',
+              'api-key': _azureOpenAiApiKey,
+            },
+            body: jsonEncode({
+              'model': 'gpt-5.4',
+              'messages': [
+                {'role': 'system', 'content': systemPrompt},
+                {'role': 'user', 'content': _liveTranscript},
+              ],
+              'max_tokens': 400,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      if (!mounted) return;
+
+      if (response.statusCode != 200) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('AI request failed (${response.statusCode})')),
+        );
+        setState(() => _aiLoading = false);
+        return;
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final content = (data['choices'] as List)[0]['message']['content'] as String;
+      setState(() {
+        _aiResponse = content;
+        _aiLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(const SnackBar(content: Text('AI request failed — check your connection and try again')));
+      setState(() => _aiLoading = false);
+    }
+  }
+
   Future<void> _editNote(PatientNote note) async {
     final controller = TextEditingController(text: note.transcript);
     final newTranscript = await showDialog<String>(
@@ -160,18 +229,34 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
           _TranscriptCard(listening: _listening, transcript: _liveTranscript),
           if (_listening) ...[
             const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: ElevatedButton.icon(
-                onPressed: _liveTranscript.trim().isEmpty ? null : _saveAsNote,
-                icon: const Icon(Icons.save_outlined, size: 18),
-                label: const Text('Save as note'),
-                style: ElevatedButton.styleFrom(backgroundColor: AicuColors.primary, foregroundColor: Colors.white),
-              ),
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _liveTranscript.trim().isEmpty || _aiLoading ? null : _getAiResponse,
+                  icon: _aiLoading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.auto_awesome, size: 18),
+                  label: Text(_aiLoading ? 'Thinking...' : 'Get AI Response'),
+                  style: ElevatedButton.styleFrom(backgroundColor: AicuColors.primary, foregroundColor: Colors.white),
+                ),
+                ElevatedButton.icon(
+                  onPressed: _liveTranscript.trim().isEmpty ? null : _saveAsNote,
+                  icon: const Icon(Icons.save_outlined, size: 18),
+                  label: const Text('Save as note'),
+                  style: ElevatedButton.styleFrom(backgroundColor: AicuColors.primary, foregroundColor: Colors.white),
+                ),
+              ],
             ),
           ],
           const SizedBox(height: 16),
-          if (_listening) _ClinicalResponseCard(response: _sampleResponse),
+          if (_aiResponse != null) _ClinicalResponseCard(response: _aiResponse!),
           const SizedBox(height: 24),
           const Text('Patient notes', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 12),
@@ -401,7 +486,7 @@ class _ClinicalResponseCard extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: const [
           Expanded(child: Text('Clinical Response', style: TextStyle(fontWeight: FontWeight.bold))),
-          Pill('Triage Level: Low-Medium'),
+          Pill('AI Generated'),
         ]),
         const SizedBox(height: 10),
         Text(response, style: const TextStyle(height: 1.4, color: Colors.black87)),
