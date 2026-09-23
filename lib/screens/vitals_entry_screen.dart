@@ -9,6 +9,10 @@ class VitalsEntryScreen extends StatefulWidget {
   final String recordedBy;
   final VitalsRepository vitalsRepository;
   final void Function(News2Result) onRecorded;
+  // Optional: also hands back the raw reading, for callers (e.g. the demo
+  // wiring) that need it to build an SBAR summary. Additive — does not
+  // change the existing onRecorded contract or its test.
+  final void Function(VitalsReading, News2Result)? onReadingRecorded;
 
   const VitalsEntryScreen({
     super.key,
@@ -17,6 +21,7 @@ class VitalsEntryScreen extends StatefulWidget {
     required this.recordedBy,
     required this.vitalsRepository,
     required this.onRecorded,
+    this.onReadingRecorded,
   });
 
   @override
@@ -50,6 +55,7 @@ class _VitalsEntryScreenState extends State<VitalsEntryScreen> {
       reading: reading,
     );
     widget.onRecorded(result);
+    widget.onReadingRecorded?.call(reading, result);
   }
 
   @override
