@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "722892542420",
+    "project_id": "aicu-mvp",
+    "storage_bucket": "aicu-mvp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:722892542420:android:8e8503795aa3939e8ac641",
+        "android_client_info": {
+          "package_name": "com.aicu.aicu"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCAk_--3EgrRYCyvQuZMhHxQ09gsOJKI8E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
