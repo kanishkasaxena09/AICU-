@@ -66,6 +66,8 @@ class _AicuShellScreenState extends State<AicuShellScreen> {
         patientId: demoPatient.patientId,
         wardId: demoPatient.wardId,
         patientNoteRepository: widget._patientNoteRepository,
+        vitalsRepository: widget._vitalsRepository,
+        escalationRepository: widget._escalationRepository,
         currentUserId: actingAsUserId,
         currentUserRole: _actingAsRole,
       ),

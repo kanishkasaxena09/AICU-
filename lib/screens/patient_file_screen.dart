@@ -68,6 +68,8 @@ class PatientFileScreen extends StatelessWidget {
           Expanded(
             child: TabBarView(children: [
               _OverviewTab(
+                patientId: patient.patientId,
+                vitalsRepository: vitalsRepository,
                 onLogVitals: () => _openVitalsEntry(context),
                 onOpenEscalations: () => _openEscalations(context),
               ),
@@ -125,9 +127,16 @@ class _HeaderCard extends StatelessWidget {
 }
 
 class _OverviewTab extends StatelessWidget {
+  final String patientId;
+  final VitalsRepository vitalsRepository;
   final VoidCallback onLogVitals;
   final VoidCallback onOpenEscalations;
-  const _OverviewTab({required this.onLogVitals, required this.onOpenEscalations});
+  const _OverviewTab({
+    required this.patientId,
+    required this.vitalsRepository,
+    required this.onLogVitals,
+    required this.onOpenEscalations,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -140,11 +149,21 @@ class _OverviewTab extends StatelessWidget {
         const SizedBox(height: 16),
         _CaseSummaryCard(),
         const SizedBox(height: 16),
-        Row(children: const [
-          Expanded(child: VitalTile(label: 'Blood Pressure', value: '138/88 · Prehypertension', abnormal: true)),
-          SizedBox(width: 8),
-          Expanded(child: VitalTile(label: 'Fasting Sugar', value: '142 mg/dL · Elevated', abnormal: true)),
-        ]),
+        StreamBuilder<Map<String, dynamic>?>(
+          stream: vitalsRepository.watchLatestVitals(patientId),
+          builder: (context, snapshot) {
+            final data = snapshot.data;
+            if (data == null) {
+              return const Text('No vitals recorded yet', style: TextStyle(color: Colors.black54));
+            }
+            final abnormal = data['news2Band'] == 'medium' || data['news2Band'] == 'high';
+            return Row(children: [
+              Expanded(child: VitalTile(label: 'Systolic BP', value: '${data['systolicBp']} mmHg', abnormal: abnormal)),
+              const SizedBox(width: 8),
+              Expanded(child: VitalTile(label: 'Temperature', value: '${data['temperature']} °C', abnormal: abnormal)),
+            ]);
+          },
+        ),
         const SizedBox(height: 16),
         OutlinedButton.icon(
           onPressed: onOpenEscalations,

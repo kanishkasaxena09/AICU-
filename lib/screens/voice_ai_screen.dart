@@ -4,24 +4,43 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:aicu/models/patient_note.dart';
+import 'package:aicu/models/vitals_reading.dart';
+import 'package:aicu/repositories/escalation_repository.dart';
 import 'package:aicu/repositories/patient_note_repository.dart';
+import 'package:aicu/repositories/vitals_repository.dart';
 import 'package:aicu/screens/common/aicu_ui.dart';
 import 'package:aicu/screens/nurse_demo_screen.dart' show demoPatient;
+import 'package:aicu/services/news2_engine.dart';
+import 'package:aicu/services/vitals_intake.dart';
 
 // Speech-to-text capture (mic -> live transcript) is real, via the
 // speech_to_text package. "Save as note" persists the live transcript to
 // Firestore via PatientNoteRepository, and the notes list is a live stream
-// of real patientNotes docs. The "Clinical Response" card is now backed by
-// a real Azure OpenAI chat-completions call (see _getAiResponse below) —
-// the API key is read from a compile-time --dart-define and never
-// hardcoded.
+// of real patientNotes docs. "Extract & Save to Patient Record" is backed by
+// a real Azure OpenAI chat-completions call that extracts structured vitals
+// + a freeform clinical observation from the spoken transcript (see
+// _extractAndSave below), and saves the result through the same
+// recordVitals/escalation pipeline as the nurse demo screen — the API key
+// is read from a compile-time --dart-define and never hardcoded.
 const _azureOpenAiEndpoint =
     'https://info-mjgvb8f5-eastus2.openai.azure.com/openai/v1/chat/completions';
 const _azureOpenAiApiKey = String.fromEnvironment('AZURE_OPENAI_API_KEY');
+
+// Clinically-normal defaults used to fill in any vital not mentioned in the
+// speech, so a partial utterance ("BP's 120 over 80") doesn't block saving —
+// VitalsReading requires every field.
+const _defaultRespirationRate = 16;
+const _defaultSpo2 = 98;
+const _defaultSystolicBp = 120;
+const _defaultPulse = 75;
+const _defaultTemperature = 36.5;
+
 class VoiceAiScreen extends StatefulWidget {
   final String patientId;
   final String wardId;
   final PatientNoteRepository patientNoteRepository;
+  final VitalsRepository vitalsRepository;
+  final EscalationRepository escalationRepository;
   final String currentUserId;
   final String currentUserRole;
 
@@ -30,6 +49,8 @@ class VoiceAiScreen extends StatefulWidget {
     required this.patientId,
     required this.wardId,
     required this.patientNoteRepository,
+    required this.vitalsRepository,
+    required this.escalationRepository,
     required this.currentUserId,
     required this.currentUserRole,
   });
@@ -44,7 +65,7 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
   String _liveTranscript = '';
 
   bool _aiLoading = false;
-  String? _aiResponse;
+  _ExtractionSummary? _extractionSummary;
 
   @override
   void dispose() {
@@ -107,28 +128,35 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
     messenger.showSnackBar(const SnackBar(content: Text('Note saved')));
   }
 
-  Future<void> _getAiResponse() async {
+  Future<void> _extractAndSave() async {
     if (_liveTranscript.trim().isEmpty) return;
     final messenger = ScaffoldMessenger.of(context);
 
     if (_azureOpenAiApiKey.isEmpty) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('AI response not configured — missing API key')),
+        const SnackBar(content: Text('AI extraction not configured — missing API key')),
       );
       return;
     }
 
     setState(() {
       _aiLoading = true;
-      _aiResponse = null;
+      _extractionSummary = null;
     });
 
     try {
       final systemPrompt =
-          'You are a clinical assistant helping a nurse or doctor quickly interpret a spoken '
-          'query about a patient. Give a brief, clear, clinically appropriate response in 2-4 '
-          'sentences. Patient: ${demoPatient.fullName}, diagnosis: ${demoPatient.diagnosis}, '
-          'allergies: ${demoPatient.allergies.join(', ')}.';
+          'You are a clinical data extraction assistant. Given a spoken clinical observation '
+          'about a patient, extract any vital signs mentioned and any other clinical '
+          'observations. Respond with ONLY a JSON object, no other text, matching exactly this '
+          'shape: {"respirationRate": number|null, "spo2": number|null, "systolicBp": '
+          'number|null, "pulse": number|null, "temperature": number|null, "consciousness": '
+          '"alert"|"confusionNew"|"voice"|"pain"|"unresponsive"|null, "conditions": '
+          'string|null}. Use null for any field not mentioned in the speech. "conditions" '
+          'should be a brief clinical summary of any non-vital-sign observations mentioned '
+          '(symptoms, patient state, complaints) — null if none. Patient: '
+          '${demoPatient.fullName}, diagnosis: ${demoPatient.diagnosis}, allergies: '
+          '${demoPatient.allergies.join(', ')}.';
 
       final response = await http
           .post(
@@ -160,16 +188,128 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final content = (data['choices'] as List)[0]['message']['content'] as String;
-      setState(() {
-        _aiResponse = content;
-        _aiLoading = false;
-      });
+
+      Map<String, dynamic> extracted;
+      try {
+        extracted = jsonDecode(_stripCodeFences(content)) as Map<String, dynamic>;
+      } catch (_) {
+        if (!mounted) return;
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Could not extract structured data from response')),
+        );
+        setState(() => _aiLoading = false);
+        return;
+      }
+
+      await _saveExtractedData(extracted, messenger);
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(const SnackBar(content: Text('AI request failed — check your connection and try again')));
       setState(() => _aiLoading = false);
     }
   }
+
+  String _stripCodeFences(String content) {
+    var text = content.trim();
+    if (text.startsWith('```')) {
+      text = text.substring(3);
+      if (text.startsWith('json')) text = text.substring(4);
+    }
+    if (text.endsWith('```')) {
+      text = text.substring(0, text.length - 3);
+    }
+    return text.trim();
+  }
+
+  Future<void> _saveExtractedData(Map<String, dynamic> extracted, ScaffoldMessengerState messenger) async {
+    final respirationRate = extracted['respirationRate'] as num?;
+    final spo2 = extracted['spo2'] as num?;
+    final systolicBp = extracted['systolicBp'] as num?;
+    final pulse = extracted['pulse'] as num?;
+    final temperature = extracted['temperature'] as num?;
+    final consciousness = extracted['consciousness'] as String?;
+    final conditions = extracted['conditions'] as String?;
+
+    final hasVitals = respirationRate != null ||
+        spo2 != null ||
+        systolicBp != null ||
+        pulse != null ||
+        temperature != null ||
+        consciousness != null;
+    final hasConditions = conditions != null && conditions.trim().isNotEmpty;
+
+    if (!hasVitals && !hasConditions) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('No clinical data recognized in that speech — try again.')),
+      );
+      setState(() => _aiLoading = false);
+      return;
+    }
+
+    News2Result? result;
+    VitalsReading? reading;
+    if (hasVitals) {
+      reading = VitalsReading(
+        respirationRate: respirationRate?.toInt() ?? _defaultRespirationRate,
+        spo2: spo2?.toInt() ?? _defaultSpo2,
+        spo2Scale: SpoScale.scale1,
+        onSupplementalOxygen: false,
+        systolicBp: systolicBp?.toInt() ?? _defaultSystolicBp,
+        pulse: pulse?.toInt() ?? _defaultPulse,
+        consciousness: _parseConsciousness(consciousness),
+        temperature: temperature?.toDouble() ?? _defaultTemperature,
+      );
+      result = await widget.vitalsRepository.recordVitals(
+        patientId: widget.patientId,
+        wardId: widget.wardId,
+        recordedBy: widget.currentUserId,
+        reading: reading,
+      );
+      if (!mounted) return;
+      await handleVitalsSubmission(
+        context: context,
+        escalationRepository: widget.escalationRepository,
+        patient: demoPatient,
+        reading: reading,
+        result: result,
+        recordedBy: widget.currentUserId,
+      );
+    }
+
+    if (hasConditions) {
+      await widget.patientNoteRepository.createNote(
+        patientId: widget.patientId,
+        wardId: widget.wardId,
+        authorId: widget.currentUserId,
+        authorRole: widget.currentUserRole,
+        transcript: conditions.trim(),
+      );
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _aiLoading = false;
+      _extractionSummary = _ExtractionSummary(
+        respirationRate: respirationRate?.toInt(),
+        spo2: spo2?.toInt(),
+        systolicBp: systolicBp?.toInt(),
+        pulse: pulse?.toInt(),
+        temperature: temperature?.toDouble(),
+        consciousness: consciousness,
+        conditions: hasConditions ? conditions.trim() : null,
+        news2Result: result,
+      );
+    });
+  }
+
+  Consciousness _parseConsciousness(String? value) => switch (value) {
+        'confusionNew' => Consciousness.confusionNew,
+        'voice' => Consciousness.voice,
+        'pain' => Consciousness.pain,
+        'unresponsive' => Consciousness.unresponsive,
+        _ => Consciousness.alert,
+      };
 
   Future<void> _editNote(PatientNote note) async {
     final controller = TextEditingController(text: note.transcript);
@@ -235,7 +375,7 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
               runSpacing: 8,
               children: [
                 ElevatedButton.icon(
-                  onPressed: _liveTranscript.trim().isEmpty || _aiLoading ? null : _getAiResponse,
+                  onPressed: _liveTranscript.trim().isEmpty || _aiLoading ? null : _extractAndSave,
                   icon: _aiLoading
                       ? const SizedBox(
                           width: 16,
@@ -243,7 +383,7 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
                       : const Icon(Icons.auto_awesome, size: 18),
-                  label: Text(_aiLoading ? 'Thinking...' : 'Get AI Response'),
+                  label: Text(_aiLoading ? 'Extracting...' : 'Extract & Save to Patient Record'),
                   style: ElevatedButton.styleFrom(backgroundColor: AicuColors.primary, foregroundColor: Colors.white),
                 ),
                 ElevatedButton.icon(
@@ -256,7 +396,7 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
             ),
           ],
           const SizedBox(height: 16),
-          if (_aiResponse != null) _ClinicalResponseCard(response: _aiResponse!),
+          if (_extractionSummary != null) _ExtractionSummaryCard(summary: _extractionSummary!),
           const SizedBox(height: 24),
           const Text('Patient notes', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 12),
@@ -476,20 +616,65 @@ class _TranscriptCard extends StatelessWidget {
   }
 }
 
-class _ClinicalResponseCard extends StatelessWidget {
-  final String response;
-  const _ClinicalResponseCard({required this.response});
+/// Result of one _extractAndSave() call: whatever the AI extracted (and
+/// null for anything not mentioned), plus the NEWS2 result if vitals were
+/// saved. Drives _ExtractionSummaryCard below.
+class _ExtractionSummary {
+  final int? respirationRate;
+  final int? spo2;
+  final int? systolicBp;
+  final int? pulse;
+  final double? temperature;
+  final String? consciousness;
+  final String? conditions;
+  final News2Result? news2Result;
+
+  const _ExtractionSummary({
+    this.respirationRate,
+    this.spo2,
+    this.systolicBp,
+    this.pulse,
+    this.temperature,
+    this.consciousness,
+    this.conditions,
+    this.news2Result,
+  });
+}
+
+class _ExtractionSummaryCard extends StatelessWidget {
+  final _ExtractionSummary summary;
+  const _ExtractionSummaryCard({required this.summary});
 
   @override
   Widget build(BuildContext context) {
+    final tiles = <Widget>[
+      if (summary.respirationRate != null) VitalTile(label: 'Respiration Rate', value: '${summary.respirationRate} /min'),
+      if (summary.spo2 != null) VitalTile(label: 'SpO2', value: '${summary.spo2}%'),
+      if (summary.systolicBp != null) VitalTile(label: 'Systolic BP', value: '${summary.systolicBp} mmHg'),
+      if (summary.pulse != null) VitalTile(label: 'Pulse', value: '${summary.pulse} bpm'),
+      if (summary.temperature != null) VitalTile(label: 'Temperature', value: '${summary.temperature} °C'),
+      if (summary.consciousness != null) VitalTile(label: 'Consciousness', value: summary.consciousness!),
+    ];
+
     return AicuCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: const [
-          Expanded(child: Text('Clinical Response', style: TextStyle(fontWeight: FontWeight.bold))),
-          Pill('AI Generated'),
+          Expanded(child: Text('Extracted & Saved', style: TextStyle(fontWeight: FontWeight.bold))),
+          Pill('AI Extracted'),
         ]),
         const SizedBox(height: 10),
-        Text(response, style: const TextStyle(height: 1.4, color: Colors.black87)),
+        if (tiles.isNotEmpty)
+          Wrap(spacing: 8, runSpacing: 8, children: tiles.map((t) => SizedBox(width: 150, child: t)).toList()),
+        if (summary.news2Result != null) ...[
+          const SizedBox(height: 10),
+          Pill('NEWS2 ${summary.news2Result!.aggregate} (${summary.news2Result!.band.name})'),
+        ],
+        if (summary.conditions != null) ...[
+          const SizedBox(height: 10),
+          Text('Observation note: ${summary.conditions}', style: const TextStyle(color: Colors.black87)),
+        ],
+        const SizedBox(height: 10),
+        Text('Saved to ${demoPatient.fullName}', style: const TextStyle(fontSize: 12, color: Colors.black54, fontStyle: FontStyle.italic)),
       ]),
     );
   }

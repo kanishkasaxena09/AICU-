@@ -33,6 +33,25 @@ class VitalsRepository {
     return result;
   }
 
+  // ponytail: sorted client-side (same precedent as patient_note_repository's
+  // watchNotes) to avoid needing a composite Firestore index.
+  Stream<Map<String, dynamic>?> watchLatestVitals(String patientId) {
+    return firestore
+        .collection('vitals')
+        .where('patientId', isEqualTo: patientId)
+        .snapshots()
+        .map((snap) {
+      if (snap.docs.isEmpty) return null;
+      final sorted = snap.docs.toList()
+        ..sort((a, b) {
+          final aTime = (a.data()['recordedAt'] as Timestamp?)?.toDate() ?? DateTime(1970);
+          final bTime = (b.data()['recordedAt'] as Timestamp?)?.toDate() ?? DateTime(1970);
+          return bTime.compareTo(aTime);
+        });
+      return sorted.first.data();
+    });
+  }
+
   String _consciousnessCode(Consciousness c) => switch (c) {
         Consciousness.alert => 'A',
         Consciousness.confusionNew => 'C',

@@ -28,7 +28,7 @@ class ClinicalDashboardScreen extends StatelessWidget {
           const SizedBox(height: 16),
           const Text('Ward Patients', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
-          _PatientListCard(onSelect: () => _openPatientFile(context)),
+          _PatientListCard(vitalsRepository: vitalsRepository, onSelect: () => _openPatientFile(context)),
         ],
       ),
     );
@@ -164,8 +164,9 @@ class _QuickActionsRow extends StatelessWidget {
 }
 
 class _PatientListCard extends StatelessWidget {
+  final VitalsRepository vitalsRepository;
   final VoidCallback onSelect;
-  const _PatientListCard({required this.onSelect});
+  const _PatientListCard({required this.vitalsRepository, required this.onSelect});
 
   @override
   Widget build(BuildContext context) {
@@ -196,13 +197,23 @@ class _PatientListCard extends StatelessWidget {
         const SizedBox(height: 8),
         const Pill('Attending: Dr. Mehta', background: AicuColors.background, foreground: Colors.black87),
         const SizedBox(height: 10),
-        Row(children: const [
-          Expanded(child: VitalTile(label: 'BP Monitoring', value: '128/82', trailingIcon: Icons.arrow_upward)),
-          SizedBox(width: 8),
-          Expanded(child: VitalTile(label: 'Fasting Glucose', value: '108 mg/dL')),
-          SizedBox(width: 8),
-          Expanded(child: VitalTile(label: 'SpO2 / Pulse', value: '97% / 82')),
-        ]),
+        StreamBuilder<Map<String, dynamic>?>(
+          stream: vitalsRepository.watchLatestVitals(demoPatient.patientId),
+          builder: (context, snapshot) {
+            final data = snapshot.data;
+            if (data == null) {
+              return const Text('No vitals recorded yet', style: TextStyle(fontSize: 12, color: Colors.black54));
+            }
+            final abnormal = data['news2Band'] == 'medium' || data['news2Band'] == 'high';
+            return Row(children: [
+              Expanded(child: VitalTile(label: 'Systolic BP', value: '${data['systolicBp']} mmHg', abnormal: abnormal)),
+              const SizedBox(width: 8),
+              Expanded(child: VitalTile(label: 'Respiration Rate', value: '${data['respirationRate']} /min', abnormal: abnormal)),
+              const SizedBox(width: 8),
+              Expanded(child: VitalTile(label: 'SpO2 / Pulse', value: '${data['spo2']}% / ${data['pulse']}', abnormal: abnormal)),
+            ]);
+          },
+        ),
         const SizedBox(height: 10),
         Align(alignment: Alignment.centerRight, child: TextButton(onPressed: onSelect, child: const Text('Select →'))),
       ]),
