@@ -1,13 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:aicu/models/patient_note.dart';
+import 'package:aicu/repositories/patient_note_repository.dart';
 import 'package:aicu/screens/common/aicu_ui.dart';
 
 // ponytail: UI mock only. There is no speech_to_text / audio capture / LLM
 // integration in this project. The mic button just flips a local boolean
 // and swaps in a hardcoded transcript + response string. Real speech-to-text
 // and AI inference are future work — do not mistake this for working
-// functionality.
+// functionality. What IS real: "Save as note" persists this (simulated)
+// transcript to Firestore via PatientNoteRepository, and the notes list
+// below is a live stream of real patientNotes docs.
 class VoiceAiScreen extends StatefulWidget {
-  const VoiceAiScreen({super.key});
+  final String patientId;
+  final String wardId;
+  final PatientNoteRepository patientNoteRepository;
+  final String currentUserId;
+  final String currentUserRole;
+
+  const VoiceAiScreen({
+    super.key,
+    required this.patientId,
+    required this.wardId,
+    required this.patientNoteRepository,
+    required this.currentUserId,
+    required this.currentUserRole,
+  });
 
   @override
   State<VoiceAiScreen> createState() => _VoiceAiScreenState();
@@ -22,6 +39,50 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
       'both acknowledged within target response time. Current band: Low-Medium.';
 
   void _toggleMic() => setState(() => _listening = !_listening);
+
+  Future<void> _saveAsNote() async {
+    final messenger = ScaffoldMessenger.of(context);
+    await widget.patientNoteRepository.createNote(
+      patientId: widget.patientId,
+      wardId: widget.wardId,
+      authorId: widget.currentUserId,
+      authorRole: widget.currentUserRole,
+      transcript: _sampleTranscript,
+    );
+    messenger.showSnackBar(const SnackBar(content: Text('Note saved')));
+  }
+
+  Future<void> _editNote(PatientNote note) async {
+    final controller = TextEditingController(text: note.transcript);
+    final newTranscript = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit note'),
+        content: TextField(controller: controller, maxLines: 4, autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (newTranscript == null || newTranscript.trim().isEmpty) return;
+    await widget.patientNoteRepository.editNote(
+      noteId: note.noteId,
+      editorId: widget.currentUserId,
+      editorRole: widget.currentUserRole,
+      newTranscript: newTranscript.trim(),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Note updated')));
+  }
+
+  bool _canEdit(PatientNote note) {
+    if (widget.currentUserRole == 'doctor') return true;
+    return note.authorId == widget.currentUserId;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,10 +108,86 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
           _Waveform(active: _listening),
           const SizedBox(height: 20),
           _TranscriptCard(listening: _listening, transcript: _sampleTranscript),
+          if (_listening) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                onPressed: _saveAsNote,
+                icon: const Icon(Icons.save_outlined, size: 18),
+                label: const Text('Save as note'),
+                style: ElevatedButton.styleFrom(backgroundColor: AicuColors.primary, foregroundColor: Colors.white),
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           if (_listening) _ClinicalResponseCard(response: _sampleResponse),
+          const SizedBox(height: 24),
+          const Text('Patient notes', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 12),
+          StreamBuilder<List<PatientNote>>(
+            stream: widget.patientNoteRepository.watchNotes(widget.patientId),
+            builder: (context, snapshot) {
+              final notes = snapshot.data ?? const <PatientNote>[];
+              if (notes.isEmpty) {
+                return const Text('No notes yet.', style: TextStyle(color: Colors.black54));
+              }
+              return Column(
+                children: notes
+                    .map((note) => Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: _NoteCard(
+                            note: note,
+                            canEdit: _canEdit(note),
+                            onEdit: () => _editNote(note),
+                          ),
+                        ))
+                    .toList(),
+              );
+            },
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _NoteCard extends StatelessWidget {
+  final PatientNote note;
+  final bool canEdit;
+  final VoidCallback onEdit;
+  const _NoteCard({required this.note, required this.canEdit, required this.onEdit});
+
+  @override
+  Widget build(BuildContext context) {
+    return AicuCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Pill(note.authorRole == 'doctor' ? 'Doctor' : 'Nurse'),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              note.createdAt != null ? note.createdAt.toString() : 'Just now',
+              style: const TextStyle(fontSize: 11, color: Colors.black45),
+            ),
+          ),
+          if (canEdit)
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, size: 18, color: AicuColors.primary),
+              onPressed: onEdit,
+              tooltip: 'Edit note',
+            ),
+        ]),
+        const SizedBox(height: 8),
+        Text(note.transcript, style: const TextStyle(color: Colors.black87)),
+        if (note.lastEditedBy != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Edited by ${note.lastEditedByRole == 'doctor' ? 'Dr.' : 'Nurse'} ${note.lastEditedBy}',
+            style: const TextStyle(fontSize: 11, color: AicuColors.alert, fontStyle: FontStyle.italic),
+          ),
+        ],
+      ]),
     );
   }
 }
