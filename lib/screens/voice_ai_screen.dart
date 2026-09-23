@@ -3,13 +3,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:aicu/models/demo_patients.dart';
+import 'package:aicu/models/patient.dart';
 import 'package:aicu/models/patient_note.dart';
 import 'package:aicu/models/vitals_reading.dart';
 import 'package:aicu/repositories/escalation_repository.dart';
 import 'package:aicu/repositories/patient_note_repository.dart';
 import 'package:aicu/repositories/vitals_repository.dart';
 import 'package:aicu/screens/common/aicu_ui.dart';
-import 'package:aicu/screens/nurse_demo_screen.dart' show demoPatient;
 import 'package:aicu/services/news2_engine.dart';
 import 'package:aicu/services/vitals_intake.dart';
 
@@ -36,6 +37,7 @@ const _defaultPulse = 75;
 const _defaultTemperature = 36.5;
 
 class VoiceAiScreen extends StatefulWidget {
+  final Patient patient;
   final String patientId;
   final String wardId;
   final PatientNoteRepository patientNoteRepository;
@@ -46,6 +48,7 @@ class VoiceAiScreen extends StatefulWidget {
 
   const VoiceAiScreen({
     super.key,
+    required this.patient,
     required this.patientId,
     required this.wardId,
     required this.patientNoteRepository,
@@ -159,8 +162,8 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
           'string|null}. Use null for any field not mentioned in the speech. "conditions" '
           'should be a brief clinical summary of any non-vital-sign observations mentioned '
           '(symptoms, patient state, complaints) — null if none. Patient: '
-          '${demoPatient.fullName}, diagnosis: ${demoPatient.diagnosis}, allergies: '
-          '${demoPatient.allergies.join(', ')}.';
+          '${widget.patient.fullName}, diagnosis: ${widget.patient.diagnosis}, allergies: '
+          '${widget.patient.allergies.join(', ')}.';
 
       final response = await http
           .post(
@@ -274,7 +277,7 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
       await handleVitalsSubmission(
         context: context,
         escalationRepository: widget.escalationRepository,
-        patient: demoPatient,
+        patient: widget.patient,
         reading: reading,
         result: result,
         recordedBy: widget.currentUserId,
@@ -357,7 +360,7 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
         children: [
           _HeroCard(),
           const SizedBox(height: 16),
-          _PatientContextChip(),
+          _PatientContextChip(patient: widget.patient),
           const SizedBox(height: 24),
           _MicButton(listening: _listening, onTap: _toggleMic),
           const SizedBox(height: 12),
@@ -400,7 +403,8 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
             ),
           ],
           const SizedBox(height: 16),
-          if (_extractionSummary != null) _ExtractionSummaryCard(summary: _extractionSummary!),
+          if (_extractionSummary != null)
+            _ExtractionSummaryCard(summary: _extractionSummary!, patient: widget.patient),
           const SizedBox(height: 24),
           const Text('Patient notes', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 12),
@@ -502,23 +506,79 @@ class _HeroCard extends StatelessWidget {
 }
 
 class _PatientContextChip extends StatelessWidget {
+  final Patient patient;
+  const _PatientContextChip({required this.patient});
+
+  void _showSwitchPatientInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Switch Patient'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Switch patients from the Dashboard tab to change who Voice AI applies to.',
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+              const SizedBox(height: 12),
+              ...demoPatients.map(
+                (p) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: AicuCard(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(children: [
+                      Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(p.fullName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          Text(p.diagnosis, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                        ]),
+                      ),
+                      if (p.patientId == patient.patientId) const Pill('Current'),
+                    ]),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Close')),
+        ],
+      ),
+    );
+    // ponytail: informational picker only — actual switching stays owned by
+    // the Dashboard tab's _selectedPatient state in main.dart. Wire a
+    // callback/ValueNotifier from the shell if this needs to switch in place.
+  }
+
   @override
   Widget build(BuildContext context) {
+    final info = demoPatientInfo[patient.patientId];
+    final age = computeAge(patient.dob);
     return AicuCard(
       child: Row(children: [
         const Icon(Icons.favorite, color: AicuColors.alert, size: 18),
         const SizedBox(width: 8),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: const [
-              Text('Jane Doe (Demo)', style: TextStyle(fontWeight: FontWeight.bold)),
-              SizedBox(width: 8),
-              Pill('B+'),
+            Row(children: [
+              Text(patient.fullName, style: const TextStyle(fontWeight: FontWeight.bold)),
+              if (info != null) ...[const SizedBox(width: 8), Pill(info.bloodGroup)],
             ]),
-            const Text('P-10245 • 45y F • Pneumonia', style: TextStyle(fontSize: 12, color: Colors.black54)),
+            Text(
+              '${patient.patientId} • ${age}y${info != null ? ' ${info.sex}' : ''} • ${patient.diagnosis}',
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+            ),
           ]),
         ),
-        IconButton(icon: const Icon(Icons.swap_horiz, color: AicuColors.primary), onPressed: () => showComingSoon(context, 'Switch Patient')),
+        IconButton(
+          icon: const Icon(Icons.swap_horiz, color: AicuColors.primary),
+          onPressed: () => _showSwitchPatientInfo(context),
+        ),
       ]),
     );
   }
@@ -647,7 +707,8 @@ class _ExtractionSummary {
 
 class _ExtractionSummaryCard extends StatelessWidget {
   final _ExtractionSummary summary;
-  const _ExtractionSummaryCard({required this.summary});
+  final Patient patient;
+  const _ExtractionSummaryCard({required this.summary, required this.patient});
 
   @override
   Widget build(BuildContext context) {
@@ -678,7 +739,7 @@ class _ExtractionSummaryCard extends StatelessWidget {
           Text('Observation note: ${summary.conditions}', style: const TextStyle(color: Colors.black87)),
         ],
         const SizedBox(height: 10),
-        Text('Saved to ${demoPatient.fullName}', style: const TextStyle(fontSize: 12, color: Colors.black54, fontStyle: FontStyle.italic)),
+        Text('Saved to ${patient.fullName}', style: const TextStyle(fontSize: 12, color: Colors.black54, fontStyle: FontStyle.italic)),
       ]),
     );
   }

@@ -69,6 +69,7 @@ class _AicuShellScreenState extends State<AicuShellScreen> {
         escalationRepository: widget._escalationRepository,
       ),
       VoiceAiScreen(
+        patient: _selectedPatient,
         patientId: _selectedPatient.patientId,
         wardId: _selectedPatient.wardId,
         patientNoteRepository: widget._patientNoteRepository,
