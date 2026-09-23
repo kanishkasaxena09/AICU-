@@ -3,6 +3,9 @@
 *.log
 *.pyc
 *.swp
+
+# Subagent-driven-development scratch workspace (ledgers, briefs, reports)
+.superpowers/
 .DS_Store
 .atom/
 .build/
