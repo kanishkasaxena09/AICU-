@@ -112,6 +112,10 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
     });
     await _speech.listen(
       onResult: (result) => setState(() => _liveTranscript = result.recognizedWords),
+      listenOptions: SpeechListenOptions(
+        listenFor: const Duration(seconds: 60),
+        pauseFor: const Duration(seconds: 8),
+      ),
     );
   }
 
