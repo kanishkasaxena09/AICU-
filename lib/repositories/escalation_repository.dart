@@ -40,4 +40,20 @@ class EscalationRepository {
         .snapshots()
         .map((snap) => snap.docs.map((d) => Escalation.fromMap(d.id, d.data())).toList());
   }
+
+  Future<int> acknowledge(String escalationId, String acknowledgedBy) async {
+    final ref = firestore.collection('escalations').doc(escalationId);
+    final doc = await ref.get();
+    final raisedAt = doc.data()!['raisedAt'];
+    final raisedAtTime = raisedAt is DateTime ? raisedAt : DateTime.now();
+    final now = DateTime.now();
+    final responseTimeSeconds = now.difference(raisedAtTime).inSeconds.clamp(0, 1 << 31);
+
+    await ref.update({
+      'acknowledgedBy': acknowledgedBy,
+      'acknowledgedAt': FieldValue.serverTimestamp(),
+      'responseTimeSeconds': responseTimeSeconds,
+    });
+    return responseTimeSeconds;
+  }
 }

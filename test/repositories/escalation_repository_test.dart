@@ -34,4 +34,21 @@ void main() {
     final open = await repo.watchOpenEscalations('w1').first;
     expect(open, isEmpty);
   });
+
+  test('acknowledge sets acknowledgedBy/At and a non-negative response time', () async {
+    final firestore = FakeFirebaseFirestore();
+    final repo = EscalationRepository(firestore: firestore);
+    const sbar = SbarSummary(situation: 's', background: 'b', assessment: 'a', recommendation: 'r');
+    final id = await repo.raiseEscalation(
+      patientId: 'p1', wardId: 'w1', triggeredByVitalId: 'v1',
+      news2Score: 6, news2Band: 'medium', raisedBy: 'nurse-u1', sbarSummary: sbar,
+    );
+
+    final responseTime = await repo.acknowledge(id, 'doctor-u1');
+
+    expect(responseTime, greaterThanOrEqualTo(0));
+    final doc = await firestore.collection('escalations').doc(id).get();
+    expect(doc.data()!['acknowledgedBy'], 'doctor-u1');
+    expect(doc.data()!['responseTimeSeconds'], responseTime);
+  });
 }
