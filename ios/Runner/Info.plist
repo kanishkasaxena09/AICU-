@@ -28,6 +28,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>AICU needs camera access to scan a patient's QR code.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>AICU needs microphone access to transcribe clinical voice notes.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>AICU needs speech recognition to transcribe clinical voice notes.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

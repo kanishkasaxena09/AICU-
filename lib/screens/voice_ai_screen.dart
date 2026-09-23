@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:aicu/models/patient_note.dart';
 import 'package:aicu/repositories/patient_note_repository.dart';
 import 'package:aicu/screens/common/aicu_ui.dart';
 
-// ponytail: UI mock only. There is no speech_to_text / audio capture / LLM
-// integration in this project. The mic button just flips a local boolean
-// and swaps in a hardcoded transcript + response string. Real speech-to-text
-// and AI inference are future work — do not mistake this for working
-// functionality. What IS real: "Save as note" persists this (simulated)
-// transcript to Firestore via PatientNoteRepository, and the notes list
-// below is a live stream of real patientNotes docs.
+// Speech-to-text capture (mic -> live transcript) is real, via the
+// speech_to_text package. The "Clinical Response" card below is still a
+// hardcoded UI mock — there is no LLM/AI-inference integration in this
+// project. Do not mistake the response card for real AI. What IS real:
+// "Save as note" persists the live transcript to Firestore via
+// PatientNoteRepository, and the notes list is a live stream of real
+// patientNotes docs.
 class VoiceAiScreen extends StatefulWidget {
   final String patientId;
   final String wardId;
@@ -31,23 +32,72 @@ class VoiceAiScreen extends StatefulWidget {
 }
 
 class _VoiceAiScreenState extends State<VoiceAiScreen> {
+  final _speech = SpeechToText();
   bool _listening = false;
+  String _liveTranscript = '';
 
-  static const _sampleTranscript = "Show patient Jane Doe's recent vitals and NEWS2 trend.";
+  // AI response is still a static placeholder — see class-level comment.
   static const _sampleResponse =
       'NEWS2 trend for Jane Doe (Demo) over the last 24h shows two escalations above threshold, '
       'both acknowledged within target response time. Current band: Low-Medium.';
 
-  void _toggleMic() => setState(() => _listening = !_listening);
+  @override
+  void dispose() {
+    if (_listening) {
+      _speech.stop();
+    }
+    super.dispose();
+  }
+
+  Future<void> _toggleMic() async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (_listening) {
+      await _speech.stop();
+      if (!mounted) return;
+      setState(() => _listening = false);
+      return;
+    }
+
+    final available = await _speech.initialize(
+      onError: (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Speech recognition error: ${error.errorMsg}')),
+        );
+        setState(() => _listening = false);
+      },
+      onStatus: (status) {
+        if (status == 'done' || status == 'notListening') {
+          if (mounted) setState(() => _listening = false);
+        }
+      },
+    );
+
+    if (!available) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Microphone permission is required for voice dictation.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _listening = true;
+      _liveTranscript = '';
+    });
+    await _speech.listen(
+      onResult: (result) => setState(() => _liveTranscript = result.recognizedWords),
+    );
+  }
 
   Future<void> _saveAsNote() async {
+    if (_liveTranscript.trim().isEmpty) return;
     final messenger = ScaffoldMessenger.of(context);
     await widget.patientNoteRepository.createNote(
       patientId: widget.patientId,
       wardId: widget.wardId,
       authorId: widget.currentUserId,
       authorRole: widget.currentUserRole,
-      transcript: _sampleTranscript,
+      transcript: _liveTranscript,
     );
     messenger.showSnackBar(const SnackBar(content: Text('Note saved')));
   }
@@ -107,13 +157,13 @@ class _VoiceAiScreenState extends State<VoiceAiScreen> {
           const SizedBox(height: 12),
           _Waveform(active: _listening),
           const SizedBox(height: 20),
-          _TranscriptCard(listening: _listening, transcript: _sampleTranscript),
+          _TranscriptCard(listening: _listening, transcript: _liveTranscript),
           if (_listening) ...[
             const SizedBox(height: 12),
             Align(
               alignment: Alignment.centerRight,
               child: ElevatedButton.icon(
-                onPressed: _saveAsNote,
+                onPressed: _liveTranscript.trim().isEmpty ? null : _saveAsNote,
                 icon: const Icon(Icons.save_outlined, size: 18),
                 label: const Text('Save as note'),
                 style: ElevatedButton.styleFrom(backgroundColor: AicuColors.primary, foregroundColor: Colors.white),
@@ -317,7 +367,11 @@ class _TranscriptCard extends StatelessWidget {
         ]),
         const SizedBox(height: 10),
         Text(
-          listening ? '"$transcript"\n— Dr. Mehta' : 'No active dictation. Tap the mic to start.',
+          !listening
+              ? 'No active dictation. Tap the mic to start.'
+              : transcript.trim().isEmpty
+                  ? 'Listening... say something'
+                  : '"$transcript"',
           style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.black87),
         ),
         const SizedBox(height: 10),
