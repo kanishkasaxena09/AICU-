@@ -184,9 +184,44 @@ class _DeteriorationWarningCard extends StatelessWidget {
               Text('7.2% HbA1c', style: TextStyle(fontWeight: FontWeight.bold, color: AicuColors.primary)),
             ]),
           ),
-          TextButton(onPressed: () => showComingSoon(context, 'Deterioration Details'), child: const Text('Details')),
+          TextButton(onPressed: () => _showDeteriorationDetails(context), child: const Text('Details')),
         ]),
       ]),
+    );
+  }
+
+  void _showDeteriorationDetails(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Postprandial Spike Cluster Detected'),
+        content: SingleChildScrollView(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: const [
+            Text(
+              'Simulated data points behind this flag (last 14 days):',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            ),
+            SizedBox(height: 8),
+            Text('• Day 2 — postprandial glucose 224 mg/dL', style: TextStyle(fontSize: 13)),
+            Text('• Day 6 — postprandial glucose 218 mg/dL', style: TextStyle(fontSize: 13)),
+            Text('• Day 11 — postprandial glucose 231 mg/dL', style: TextStyle(fontSize: 13)),
+            SizedBox(height: 12),
+            Text(
+              'All three readings exceed the 210 mg/dL post-meal threshold, consistent with the '
+              '8.4% unmanaged vs. 7.2% titrated HbA1c projection above.',
+              style: TextStyle(fontSize: 13, color: Colors.black87, height: 1.4),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Recommendation: review evening insulin/metformin titration with the patient\'s endocrinologist.',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AicuColors.primaryDark),
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close')),
+        ],
+      ),
     );
   }
 }
